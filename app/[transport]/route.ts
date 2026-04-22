@@ -65,12 +65,20 @@ const handler = createMcpHandler(
         },
       },
       async ({ persona, scenario, difficulty }) => {
-        const html = renderRoleplayAppHtml({ persona, scenario, difficulty, apiBase: getApiBase() });
+        const base = getApiBase();
+        const html = renderRoleplayAppHtml({ persona, scenario, difficulty, apiBase: base });
+        const qs = new URLSearchParams();
+        if (persona) qs.set("persona", persona);
+        if (scenario) qs.set("scenario", scenario);
+        if (difficulty) qs.set("difficulty", difficulty);
+        const hostedUrl = `${base}/app${qs.toString() ? `?${qs}` : ""}`;
         return {
           content: [
             {
               type: "text",
-              text: "Tough Customer roleplay configurator — fill in the form and click Generate.",
+              text:
+                `Tough Customer roleplay configurator.\n\n` +
+                `If the UI doesn't render inline, open it in a browser:\n${hostedUrl}`,
             },
             {
               type: "resource",
@@ -126,9 +134,15 @@ const handler = createMcpHandler(
           difficulty: link.difficulty,
           apiBase: getApiBase(),
         });
+        const hostedUrl = `${getApiBase()}/app?persona=${encodeURIComponent(link.persona)}&scenario=${encodeURIComponent(link.scenario)}&difficulty=${link.difficulty}`;
         return {
           content: [
-            { type: "text", text: `Roleplay link: ${link.url}` },
+            {
+              type: "text",
+              text:
+                `Roleplay link: ${link.url}\n\n` +
+                `Open the configurator UI: ${hostedUrl}`,
+            },
             {
               type: "resource",
               resource: {
