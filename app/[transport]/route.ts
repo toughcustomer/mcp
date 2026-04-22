@@ -6,6 +6,14 @@ import { renderRoleplayAppHtml, UI_RESOURCE_URI } from "@/lib/ui";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+function getApiBase(): string {
+  if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL)
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "";
+}
+
 const handler = createMcpHandler(
   (server) => {
     server.registerResource(
@@ -21,7 +29,7 @@ const handler = createMcpHandler(
           {
             uri: uri.href,
             mimeType: "text/html",
-            text: renderRoleplayAppHtml(),
+            text: renderRoleplayAppHtml({ apiBase: getApiBase() }),
           },
         ],
       }),
@@ -57,7 +65,7 @@ const handler = createMcpHandler(
         },
       },
       async ({ persona, scenario, difficulty }) => {
-        const html = renderRoleplayAppHtml({ persona, scenario, difficulty });
+        const html = renderRoleplayAppHtml({ persona, scenario, difficulty, apiBase: getApiBase() });
         return {
           content: [
             {
@@ -116,6 +124,7 @@ const handler = createMcpHandler(
           persona: link.persona,
           scenario: link.scenario,
           difficulty: link.difficulty,
+          apiBase: getApiBase(),
         });
         return {
           content: [

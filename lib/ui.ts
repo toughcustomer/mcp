@@ -7,9 +7,11 @@ export function renderRoleplayAppHtml(seed?: {
   persona?: string;
   scenario?: string;
   difficulty?: "easy" | "medium" | "hard";
+  apiBase?: string;
 }): string {
   const seedJson = JSON.stringify(seed ?? {});
   const templatesJson = JSON.stringify(TEMPLATES);
+  const apiBaseJson = JSON.stringify(seed?.apiBase ?? "");
 
   return `<!doctype html>
 <html lang="en">
@@ -102,6 +104,7 @@ export function renderRoleplayAppHtml(seed?: {
 <script type="module">
   const seed = ${seedJson};
   const templates = ${templatesJson};
+  const API_BASE = ${apiBaseJson};
 
   const $ = (id) => document.getElementById(id);
   const personaEl = $("persona"), scenarioEl = $("scenario"),
@@ -137,7 +140,7 @@ export function renderRoleplayAppHtml(seed?: {
     }
     resultEl.innerHTML = '<div class="result">Generating…</div>';
     try {
-      const res = await fetch("/api/roleplays", {
+      const res = await fetch(API_BASE + "/api/roleplays", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
