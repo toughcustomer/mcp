@@ -1,95 +1,164 @@
-import { createUIResource } from "@mcp-ui/server";
 import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
-import { generateRoleplayLink, TEMPLATES } from "@/lib/roleplays";
+import {
+  createRoleplaySession,
+  getOpportunityContacts,
+  listOpportunities,
+  listScenarios,
+  listVoices,
+  TCNotFoundError,
+} from "@/lib/tc-service";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-function getApiBase(): string {
-  if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL;
-  if (process.env.VERCEL_PROJECT_PRODUCTION_URL)
-    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  return "";
+function handleError(err: unknown): string {
+  if (err instanceof TCNotFoundError) return `Error: ${err.message}`;
+  if (err instanceof Error) return `Error: ${err.message}`;
+  return `Error: ${String(err)}`;
 }
 
 const handler = createMcpHandler(
   (server) => {
-    server.registerTool(
-      "toughcustomer_open_roleplay_app",
+    // ─── Resources ──────────────────────────────────────────────────────────
+
+    server.registerResource(
+      "opportunities",
+      "toughcustomer://opportunities",
       {
-        title: "Open Roleplay App",
+        title: "Opportunities",
+        description: "List of active sales opportunities for the current user.",
+        mimeType: "application/json",
+      },
+      async (uri) => {
+        const opportunities = await listOpportunities();
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              mimeType: "application/json",
+              text: JSON.stringify(opportunities, null, 2),
+            },
+          ],
+        };
+      },
+    );
+
+    server.registerResource(
+      "scenarios",
+      "toughcustomer://scenarios",
+      {
+        title: "Scenarios",
+        description: "Roleplay scenarios the user can choose from.",
+        mimeType: "application/json",
+      },
+      async (uri) => {
+        const scenarios = await listScenarios();
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              mimeType: "application/json",
+              text: JSON.stringify(scenarios, null, 2),
+            },
+          ],
+        };
+      },
+    );
+
+    server.registerResource(
+      "voices",
+      "toughcustomer://voices",
+      {
+        title: "Voices",
+        description: "Available AI buyer voices grouped by gender.",
+        mimeType: "application/json",
+      },
+      async (uri) => {
+        const voices = await listVoices();
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              mimeType: "application/json",
+              text: JSON.stringify(voices, null, 2),
+            },
+          ],
+        };
+      },
+    );
+
+    // ─── Tools ──────────────────────────────────────────────────────────────
+
+    server.registerTool(
+      "get_opportunity_contacts",
+      {
+        title: "Get Opportunity Contacts",
         description:
-          "Open the Tough Customer roleplay configurator UI inline. User picks a persona/scenario and generates a shareable roleplay link.",
+          "Fetch the list of contacts (buying committee members) attached to a specific opportunity. " +
+          "Call this after the user selects an opportunity from toughcustomer://opportunities.",
         inputSchema: {
-          persona: z
+          opportunityId: z
             .string()
-            .max(500)
-            .optional()
-            .describe("Optional persona to pre-fill in the form."),
-          scenario: z
-            .string()
-            .max(2000)
-            .optional()
-            .describe("Optional scenario to pre-fill."),
-          difficulty: z
-            .enum(["easy", "medium", "hard"])
-            .optional()
-            .describe("Optional difficulty to pre-select."),
+            .min(1)
+            .describe("The ID of the selected opportunity (e.g. opp_globaltech_platform)."),
         },
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
-          openWorldHint: false,
+          openWorldHint: true,
         },
       },
-      async ({ persona, scenario, difficulty }) => {
-        const base = getApiBase();
-        const qs = new URLSearchParams();
-        if (persona) qs.set("persona", persona);
-        if (scenario) qs.set("scenario", scenario);
-        if (difficulty) qs.set("difficulty", difficulty);
-        const hostedUrl = `${base}/app${qs.toString() ? `?${qs}` : ""}`;
-
-        const uiResource = await createUIResource({
-          uri: `ui://toughcustomer/roleplay/${Date.now()}` as `ui://${string}`,
-          content: { type: "externalUrl", iframeUrl: hostedUrl },
-          encoding: "text",
-        });
-
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Open the Tough Customer roleplay configurator: ${hostedUrl}`,
-            },
-            uiResource,
-          ],
-          _meta: {
-            "mcpui.dev/ui-resource": uiResource.resource.uri,
-            "openai/outputTemplate": uiResource.resource.uri,
-          },
-        };
+      async ({ opportunityId }) => {
+        try {
+          const contacts = await getOpportunityContacts(opportunityId);
+          if (contacts.length === 0) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `No contacts found for opportunity ${opportunityId}.`,
+                },
+              ],
+              structuredContent: { opportunityId, contacts: [] },
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify(contacts, null, 2),
+              },
+            ],
+            structuredContent: { opportunityId, contacts: [...contacts] },
+          };
+        } catch (err) {
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: handleError(err) }],
+          };
+        }
       },
     );
 
     server.registerTool(
-      "toughcustomer_create_roleplay_link",
+      "create_roleplay_session",
       {
-        title: "Create Roleplay Link",
+        title: "Create Roleplay Session",
         description:
-          "Generate a Tough Customer roleplay link for a given persona, scenario, and difficulty. Returns the URL and also renders the configurator UI with the result.",
+          "Initialize a Tough Customer roleplay session. Call this only after the user has chosen " +
+          "an opportunity, contact, voice, and scenario. Returns the session URL and compiled deal context.",
         inputSchema: {
-          persona: z.string().min(1).max(500).describe("Buyer persona."),
-          scenario: z.string().min(1).max(2000).describe("Scenario setup."),
-          difficulty: z.enum(["easy", "medium", "hard"]).default("medium"),
-          objections: z
-            .array(z.string().max(200))
-            .max(20)
+          opportunityId: z.string().min(1).describe("Selected opportunity ID."),
+          contactId: z.string().min(1).describe("Selected contact ID (must belong to the opportunity)."),
+          voiceId: z.string().min(1).describe("Selected voice ID."),
+          scenarioId: z.string().min(1).describe("Selected scenario ID."),
+          backstory: z
+            .string()
+            .max(4000)
             .optional()
-            .describe("Optional list of objection themes."),
+            .describe("Optional custom backstory / extra context provided by the user."),
         },
         annotations: {
           readOnlyHint: false,
@@ -99,58 +168,86 @@ const handler = createMcpHandler(
         },
       },
       async (input) => {
-        const link = generateRoleplayLink({
-          persona: input.persona,
-          scenario: input.scenario,
-          difficulty: input.difficulty ?? "medium",
-          objections: input.objections,
-        });
-        const base = getApiBase();
-        const hostedUrl = `${base}/app?persona=${encodeURIComponent(link.persona)}&scenario=${encodeURIComponent(link.scenario)}&difficulty=${link.difficulty}`;
-        const uiResource = await createUIResource({
-          uri: `ui://toughcustomer/roleplay/${link.id}` as `ui://${string}`,
-          content: { type: "externalUrl", iframeUrl: hostedUrl },
-          encoding: "text",
-        });
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text:
-                `Roleplay link: ${link.url}\n\n` +
-                `Open the configurator UI: ${hostedUrl}`,
+        try {
+          const session = await createRoleplaySession(input);
+          const summary =
+            `Session created successfully!\n\n` +
+            `URL: ${session.url}\n\n` +
+            `Deal context:\n` +
+            `- Opportunity: ${session.dealContext.opportunity.name} (${session.dealContext.opportunity.stage}, $${session.dealContext.opportunity.amount.toLocaleString()})\n` +
+            `- Contact: ${session.dealContext.contact.name}, ${session.dealContext.contact.title}\n` +
+            `- Voice: ${session.dealContext.voice.name} (${session.dealContext.voice.gender}) — ${session.dealContext.voice.description}\n` +
+            `- Scenario: ${session.dealContext.scenario.name}` +
+            (session.dealContext.backstory ? `\n- Backstory: ${session.dealContext.backstory}` : "");
+          return {
+            content: [{ type: "text" as const, text: summary }],
+            structuredContent: {
+              id: session.id,
+              url: session.url,
+              createdAt: session.createdAt,
+              dealContext: {
+                opportunity: { ...session.dealContext.opportunity },
+                contact: { ...session.dealContext.contact },
+                voice: { ...session.dealContext.voice },
+                scenario: { ...session.dealContext.scenario },
+                ...(session.dealContext.backstory
+                  ? { backstory: session.dealContext.backstory }
+                  : {}),
+              },
             },
-            uiResource,
-          ],
-          structuredContent: { ...link },
-          _meta: {
-            "mcpui.dev/ui-resource": uiResource.resource.uri,
-            "openai/outputTemplate": uiResource.resource.uri,
-          },
-        };
+          };
+        } catch (err) {
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: handleError(err) }],
+          };
+        }
       },
     );
 
-    server.registerTool(
-      "toughcustomer_list_templates",
+    // ─── Prompts ────────────────────────────────────────────────────────────
+
+    server.registerPrompt(
+      "setup_sales_roleplay",
       {
-        title: "List Roleplay Templates",
+        title: "Set Up a Sales Roleplay",
         description:
-          "List the built-in Tough Customer roleplay templates (persona + scenario presets).",
-        inputSchema: {},
-        annotations: {
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-          openWorldHint: false,
+          "Walks the user through configuring and launching a Tough Customer roleplay session.",
+        argsSchema: {
+          focus: z
+            .string()
+            .optional()
+            .describe("Optional focus area the user wants to practice (e.g. pricing, discovery)."),
         },
       },
-      async () => ({
-        content: [
-          { type: "text", text: JSON.stringify(TEMPLATES, null, 2) },
-        ],
-        structuredContent: { templates: [...TEMPLATES] },
-      }),
+      async ({ focus }) => {
+        const focusLine = focus
+          ? `The user wants to focus on: ${focus}. Keep this in mind when recommending scenarios.\n\n`
+          : "";
+        return {
+          messages: [
+            {
+              role: "user",
+              content: {
+                type: "text",
+                text:
+                  `You are the Tough Customer roleplay coordinator. Help the user configure and start a sales roleplay session.\n\n` +
+                  focusLine +
+                  `Follow this flow exactly — do not skip steps:\n\n` +
+                  `1. Read the resource \`toughcustomer://opportunities\` and present the list. Ask the user which deal they want to practice.\n` +
+                  `2. Once they pick one, call \`get_opportunity_contacts\` with that opportunityId. Present the contacts and ask who they want to roleplay against.\n` +
+                  `3. Read \`toughcustomer://voices\` and \`toughcustomer://scenarios\`. Let the user pick one of each (suggest a sensible default based on the deal).\n` +
+                  `4. Ask if they want to add an optional backstory / extra context.\n` +
+                  `5. Call \`create_roleplay_session\` with all selected IDs. Share the resulting session URL and summarise the compiled deal context.\n\n` +
+                  `Rules:\n` +
+                  `- Always show human-readable names, not IDs, when talking to the user. Keep IDs internal.\n` +
+                  `- If a tool returns an error, surface it plainly and ask the user to pick again.\n` +
+                  `- Don't invent opportunities, contacts, voices, or scenarios — only use what the resources and tools return.`,
+              },
+            },
+          ],
+        };
+      },
     );
   },
   {},
