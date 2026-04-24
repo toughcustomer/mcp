@@ -83,13 +83,13 @@ Status: ✅ (code in place; mock labelling pending — see 1.1)
 Acceptance:
 - Salesforce Connected App with PKCE required, scopes `api refresh_token openid`.
 - Server exposes `/.well-known/oauth-protected-resource` (RFC 9728) pointing at the SF login URL when `USE_SALESFORCE=true`.
-- Unauthenticated `POST /mcp` returns `401` with `WWW-Authenticate: Bearer resource_metadata="…"` pointing back to the metadata doc. (Middleware for this is TODO — currently auth errors come back as tool `isError: true` instead of protocol-level 401.)
+- Unauthenticated `POST /mcp` returns `401` with `WWW-Authenticate: Bearer resource_metadata="…"` pointing back to the metadata doc, so MCP clients auto-trigger the OAuth flow.
 - Claude opens the Salesforce login flow on connect and stores the access + refresh tokens.
 - Every MCP request carries `Authorization: Bearer <sf-token>`; `getSfAuth()` verifies via `/services/oauth2/userinfo`.
 - Token → SfAuth cache TTL ≤ 60s so revocations propagate quickly.
 - Dynamic Client Registration: enabled in SF if the edition supports it (Spring '25+); otherwise document hand-provisioning.
 
-Status: 🟡 (userinfo verification, `.well-known`, SfAuth plumbing shipped; protocol-level 401 middleware + WWW-Authenticate header pending; Connected App is manual setup)
+Status: 🟡 (protocol-level 401 + WWW-Authenticate, userinfo verification, `.well-known`, SfAuth plumbing all shipped; Connected App is manual setup in Salesforce)
 
 ### 2.3 Row-level security via Salesforce USER_MODE
 **As an** admin, **I want** Salesforce itself to enforce that users only see records their profile allows, **so that** there is no second policy engine to get wrong.

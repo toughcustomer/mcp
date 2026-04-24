@@ -356,4 +356,70 @@ const handler = createMcpHandler(
   },
 );
 
-export { handler as GET, handler as POST, handler as DELETE };
+// ─── Auth gate ────────────────────────────────────────────────────────────
+//
+// MCP spec (2025-06-18+) requires protected resources to respond with
+// HTTP 401 and a `WWW-Authenticate: Bearer resource_metadata="…"` header
+// when a request has no credentials. MCP clients use this to trigger
+// the OAuth flow automatically.
+//
+// We enforce the gate at HTTP level ONLY in Salesforce mode. In mock
+// mode the server is a no-auth demo and this wrapper is a pass-through.
+//
+// Token *validity* (not just presence) is still checked inside each
+// tool handler via getSfAuth(). That path returns `isError: true` to
+// Claude, which is what you want once the user has a token — only
+// the missing-token case needs protocol-level 401 to kick off OAuth.
+
+const USE_SALESFORCE = process.env.USE_SALESFORCE === "true";
+
+function publicBaseUrl(): string {
+  if (process.env.MCP_PUBLIC_URL) return process.env.MCP_PUBLIC_URL;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
+  return "http://localhost:3000";
+}
+
+function unauthenticatedResponse(): Response {
+  const metadataUrl = `${publicBaseUrl()}/.well-known/oauth-protected-resource`;
+  return new Response(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      error: {
+        code: -32001,
+        message: "Unauthorized. Connect via Salesforce OAuth.",
+      },
+      id: null,
+    }),
+    {
+      status: 401,
+      headers: {
+        "Content-Type": "application/json",
+        "WWW-Authenticate": `Bearer realm="mcp", resource_metadata="${metadataUrl}"`,
+      },
+    },
+  );
+}
+
+function withAuthGate(
+  inner: (req: Request) => Promise<Response> | Response,
+): (req: Request) => Promise<Response> {
+  return async (req: Request) => {
+    if (USE_SALESFORCE) {
+      const authz = req.headers.get("authorization") ?? req.headers.get("Authorization");
+      if (!authz || !/^Bearer\s+.+/i.test(authz)) {
+        return unauthenticatedResponse();
+      }
+    }
+    return inner(req);
+  };
+}
+
+const guardedHandler = withAuthGate(handler as (req: Request) => Promise<Response>);
+
+export {
+  guardedHandler as GET,
+  guardedHandler as POST,
+  guardedHandler as DELETE,
+};
