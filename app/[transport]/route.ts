@@ -91,6 +91,88 @@ const handler = createMcpHandler(
     // ─── Tools ──────────────────────────────────────────────────────────────
 
     server.registerTool(
+      "list_opportunities",
+      {
+        title: "List Opportunities",
+        description:
+          "List all active sales opportunities the user can roleplay against. " +
+          "Call this first to let the user pick a deal. Returns id, name, stage, and amount for each.",
+        inputSchema: {},
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+      },
+      async () => {
+        try {
+          const opportunities = await listOpportunities();
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(opportunities, null, 2) }],
+            structuredContent: { opportunities: opportunities.map((o) => ({ ...o })) },
+          };
+        } catch (err) {
+          return { isError: true, content: [{ type: "text" as const, text: handleError(err) }] };
+        }
+      },
+    );
+
+    server.registerTool(
+      "list_voices",
+      {
+        title: "List Voices",
+        description:
+          "List all available AI buyer voices. Call this when the user needs to pick a voice for the roleplay.",
+        inputSchema: {},
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+      },
+      async () => {
+        try {
+          const voices = await listVoices();
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(voices, null, 2) }],
+            structuredContent: { voices: voices.map((v) => ({ ...v })) },
+          };
+        } catch (err) {
+          return { isError: true, content: [{ type: "text" as const, text: handleError(err) }] };
+        }
+      },
+    );
+
+    server.registerTool(
+      "list_scenarios",
+      {
+        title: "List Scenarios",
+        description:
+          "List all available roleplay scenarios. Call this when the user needs to pick a scenario.",
+        inputSchema: {},
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+      },
+      async () => {
+        try {
+          const scenarios = await listScenarios();
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(scenarios, null, 2) }],
+            structuredContent: { scenarios: scenarios.map((s) => ({ ...s })) },
+          };
+        } catch (err) {
+          return { isError: true, content: [{ type: "text" as const, text: handleError(err) }] };
+        }
+      },
+    );
+
+    server.registerTool(
       "get_opportunity_contacts",
       {
         title: "Get Opportunity Contacts",
@@ -234,9 +316,9 @@ const handler = createMcpHandler(
                   `You are the Tough Customer roleplay coordinator. Help the user configure and start a sales roleplay session.\n\n` +
                   focusLine +
                   `Follow this flow exactly — do not skip steps:\n\n` +
-                  `1. Read the resource \`toughcustomer://opportunities\` and present the list. Ask the user which deal they want to practice.\n` +
+                  `1. Call the \`list_opportunities\` tool and present the list. Ask the user which deal they want to practice.\n` +
                   `2. Once they pick one, call \`get_opportunity_contacts\` with that opportunityId. Present the contacts and ask who they want to roleplay against.\n` +
-                  `3. Read \`toughcustomer://voices\` and \`toughcustomer://scenarios\`. Let the user pick one of each (suggest a sensible default based on the deal).\n` +
+                  `3. Call \`list_voices\` and \`list_scenarios\`. Let the user pick one of each (suggest a sensible default based on the deal).\n` +
                   `4. Ask if they want to add an optional backstory / extra context.\n` +
                   `5. Call \`create_roleplay_session\` with all selected IDs. Share the resulting session URL and summarise the compiled deal context.\n\n` +
                   `Rules:\n` +
