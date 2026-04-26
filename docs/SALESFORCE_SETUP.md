@@ -31,16 +31,21 @@ Settings:
 
 After save, capture **Consumer Key** → `SF_CLIENT_ID` env var.
 
-## 2. Create the custom objects + fields
+## 2. The custom objects already exist in the org
 
-See `docs/SALESFORCE_OBJECTS.md` for the full schema. Summary:
+See `docs/SALESFORCE_OBJECTS.md` for the full schema. Summary of what the
+MCP server reads/writes:
 
-- One custom checkbox on standard `Opportunity`: `Tough_Customer__c`
-- Three custom objects: `Roleplay_Voice__c`, `Roleplay_Scenario__c`,
-  `Roleplay_Session__c`
+- Standard objects: `Opportunity`, `Contact`, `OpportunityContactRole` (no
+  schema changes needed; uses `Account.Name`, `StageName`, `Amount`).
+- `Scenario__c` — roleplay/coaching scripts, already populated by admins.
+- `ScenarioAssignment__c` — created by `create_roleplay_session` to assign
+  a scenario to the calling user.
 
-All point-and-click in Setup. **No Apex classes, no test coverage chore,
-no SFDX project** required.
+There is **no** `Tough_Customer__c` flag on Opportunity, **no**
+`Roleplay_Voice__c`, **no** `Roleplay_Scenario__c`, **no**
+`Roleplay_Session__c`. Voices are hardcoded in `lib/voices.ts`. **No
+Apex deploy, no test coverage chore, no SFDX project required.**
 
 ## 3. Vercel env vars
 

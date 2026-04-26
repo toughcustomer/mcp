@@ -28,6 +28,8 @@ export { TCUnauthorizedError } from "./sf-auth";
 export interface Opportunity {
   id: string;
   name: string;
+  /** Account.Name (Salesforce). Optional — not all callers need it. */
+  accountName?: string;
   stage: string;
   amount: number;
 }
@@ -82,11 +84,17 @@ export class TCNotFoundError extends Error {
 
 // ─── Mock data ──────────────────────────────────────────────────────────
 
+// Mock opportunity / contact / scenario data used in TC_MODE=mock.
+// Voices are shared with live mode (see lib/voices.ts) — they're not a SF
+// object in this org per docs/SALESFORCE_OBJECTS.md.
+
+import { VOICES as REAL_VOICES, findVoice } from "./voices";
+
 const OPPORTUNITIES: Opportunity[] = [
-  { id: "opp_globaltech_platform", name: "GlobalTech - Platform Modernization", stage: "Discovery", amount: 250_000 },
-  { id: "opp_acme_expansion", name: "Acme Corp - Regional Expansion", stage: "Proposal", amount: 120_000 },
-  { id: "opp_finedge_renewal", name: "FinEdge - Renewal + Upsell", stage: "Negotiation", amount: 80_000 },
-  { id: "opp_northwind_pilot", name: "Northwind - Security Pilot", stage: "Qualification", amount: 45_000 },
+  { id: "opp_globaltech_platform", name: "Platform Modernization", accountName: "GlobalTech", stage: "Discovery", amount: 250_000 },
+  { id: "opp_acme_expansion", name: "Regional Expansion", accountName: "Acme Corp", stage: "Proposal", amount: 120_000 },
+  { id: "opp_finedge_renewal", name: "Renewal + Upsell", accountName: "FinEdge", stage: "Negotiation", amount: 80_000 },
+  { id: "opp_northwind_pilot", name: "Security Pilot", accountName: "Northwind", stage: "Qualification", amount: 45_000 },
 ];
 
 const CONTACTS: Contact[] = [
@@ -99,13 +107,8 @@ const CONTACTS: Contact[] = [
   { id: "ct_tom_becker", opportunityId: "opp_northwind_pilot", name: "Tom Becker", title: "CISO" },
 ];
 
-const VOICES: Voice[] = [
-  { id: "voice_charon", name: "Charon", gender: "male", description: "Deep, measured — seasoned executive feel." },
-  { id: "voice_orion", name: "Orion", gender: "male", description: "Direct, confident — no-nonsense buyer." },
-  { id: "voice_lyra", name: "Lyra", gender: "female", description: "Warm, energetic — curious champion." },
-  { id: "voice_nova", name: "Nova", gender: "female", description: "Crisp, precise — analytical evaluator." },
-  { id: "voice_atlas", name: "Atlas", gender: "neutral", description: "Even, neutral — procurement-style." },
-];
+// Voices: same hardcoded list as live mode — see lib/voices.ts.
+const VOICES = REAL_VOICES;
 
 const SCENARIOS: Scenario[] = [
   { id: "scn_enterprise_discovery", name: "Enterprise Discovery", description: "Cold discovery with a technical buyer at a large org." },
@@ -155,7 +158,7 @@ async function createRoleplaySessionMock(
       input.contactId,
     );
 
-  const voice = VOICES.find((v) => v.id === input.voiceId);
+  const voice = findVoice(input.voiceId);
   if (!voice) throw new TCNotFoundError("Voice", input.voiceId);
 
   const scenario = SCENARIOS.find((s) => s.id === input.scenarioId);
