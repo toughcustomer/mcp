@@ -28,18 +28,32 @@ function authBaseUrl(): string {
   return process.env.AUTH_BASE_URL ?? "https://auth.toughcustomer.ai";
 }
 
+/**
+ * Supabase's OAuth Server issuer identifier includes the `/auth/v1` path:
+ *   https://<project>.supabase.co/auth/v1
+ *
+ * Per RFC 8414 §3.1, when an issuer has a path component, the well-known
+ * metadata URL is `<host>/.well-known/oauth-authorization-server<path>`,
+ * NOT `<issuer>/.well-known/oauth-authorization-server`. So:
+ *
+ *   issuer    https://<project>.supabase.co/auth/v1
+ *   metadata  https://<project>.supabase.co/.well-known/oauth-authorization-server/auth/v1
+ *
+ * If we list `authorization_servers: ["https://<project>.supabase.co"]`
+ * (no path), strict clients build the wrong well-known URL and 404.
+ * Including `/auth/v1` fixes that.
+ */
+function authIssuer(): string {
+  return `${authBaseUrl()}/auth/v1`;
+}
+
 export async function GET(req: Request) {
-  // Supabase publishes its RFC 8414 AS-metadata document at a non-canonical
-  // path: `/.well-known/oauth-authorization-server/auth/v1` (not the RFC 8414
-  // canonical `/.well-known/oauth-authorization-server`). MCP clients that
-  // probe the canonical location will miss it. By including the explicit AS
-  // metadata URL here, MCP clients that read this RFC 9728 doc can fetch it
-  // directly without guessing.
-  // OIDC discovery, by contrast, lives at the conventional path.
   return Response.json(
     {
       resource: `${baseUrl()}/mcp`,
-      authorization_servers: [authBaseUrl()],
+      authorization_servers: [authIssuer()],
+      // Non-standard convenience hints. Strict RFC 9728 clients ignore these;
+      // lenient ones (and our own test harness) use them to skip discovery.
       authorization_server_metadata: `${authBaseUrl()}/.well-known/oauth-authorization-server/auth/v1`,
       openid_configuration: `${authBaseUrl()}/auth/v1/.well-known/openid-configuration`,
       bearer_methods_supported: ["header"],
