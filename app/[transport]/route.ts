@@ -291,13 +291,30 @@ const handler = createMcpHandler(
       {
         title: "Create Roleplay Session",
         description:
-          "Initialize a Tough Customer roleplay session. Call this only after the user has chosen " +
-          "an opportunity, contact, voice, and scenario. Returns the session URL and compiled deal context. " +
-          "Session is created on behalf of the current user.",
+          "Initialize a Tough Customer roleplay session. Call this after the user has chosen " +
+          "an opportunity, contact, scenario, and a voice preference. Returns the session URL and compiled deal context. " +
+          "Session is created on behalf of the current user.\n\n" +
+          "Voice selection: prefer `voiceGender` (\"male\" | \"female\" | \"any\") for most users — " +
+          "the LWC picks a concrete voice from the catalog at session start. " +
+          "Use `voiceId` only for power users who explicitly named a voice from `list_voices`. " +
+          "Provide at least one of the two; if both are given, `voiceId` wins.",
         inputSchema: {
           opportunityId: z.string().min(1).describe("Selected opportunity ID."),
           contactId: z.string().min(1).describe("Selected contact ID (must belong to the opportunity)."),
-          voiceId: z.string().min(1).describe("Selected voice ID."),
+          voiceId: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "Specific voice ID from list_voices (power-user). Optional — usually prefer voiceGender.",
+            ),
+          voiceGender: z
+            .enum(["male", "female", "any"])
+            .optional()
+            .describe(
+              "Preferred AI buyer voice gender. The LWC picks a concrete voice client-side. " +
+                "Default path for most users. Required if voiceId is not provided.",
+            ),
           scenarioId: z.string().min(1).describe("Selected scenario ID."),
           backstory: z
             .string()
@@ -312,13 +329,26 @@ const handler = createMcpHandler(
           openWorldHint: true,
         },
       },
-      async (input) =>
-        runMcpTool(
+      async (input) => {
+        if (!input.voiceId && !input.voiceGender) {
+          return {
+            isError: true as const,
+            content: [
+              {
+                type: "text" as const,
+                text:
+                  "Error: provide either `voiceGender` (\"male\" | \"female\" | \"any\") or a specific `voiceId`.",
+              },
+            ],
+          };
+        }
+        return runMcpTool(
           "create_roleplay_session",
           {
             opportunityId: input.opportunityId,
             contactId: input.contactId,
             voiceId: input.voiceId,
+            voiceGender: input.voiceGender,
             scenarioId: input.scenarioId,
             // backstory length only — never log content; redactor would strip
             // anyway but the audit table doesn't need free text
@@ -326,13 +356,18 @@ const handler = createMcpHandler(
           },
           async (auth) => {
             const session = await createRoleplaySession(auth, input);
+            const voiceLine = session.dealContext.voice
+              ? `- Voice: ${session.dealContext.voice.name} (${session.dealContext.voice.gender}) — ${session.dealContext.voice.description}\n`
+              : session.dealContext.voicePreference
+                ? `- Voice: ${session.dealContext.voicePreference.gender} (picked at session start)\n`
+                : "";
             const summary =
               `Session created successfully!\n\n` +
               `URL: ${session.url}\n\n` +
               `Deal context:\n` +
               `- Opportunity: ${session.dealContext.opportunity.name} (${session.dealContext.opportunity.stage}, $${session.dealContext.opportunity.amount.toLocaleString()})\n` +
               `- Contact: ${session.dealContext.contact.name}, ${session.dealContext.contact.title}\n` +
-              `- Voice: ${session.dealContext.voice.name} (${session.dealContext.voice.gender}) — ${session.dealContext.voice.description}\n` +
+              voiceLine +
               `- Scenario: ${session.dealContext.scenario.name}` +
               (session.dealContext.backstory ? `\n- Backstory: ${session.dealContext.backstory}` : "");
             return {
@@ -344,7 +379,16 @@ const handler = createMcpHandler(
                 dealContext: {
                   opportunity: { ...session.dealContext.opportunity },
                   contact: { ...session.dealContext.contact },
-                  voice: { ...session.dealContext.voice },
+                  ...(session.dealContext.voice
+                    ? { voice: { ...session.dealContext.voice } }
+                    : {}),
+                  ...(session.dealContext.voicePreference
+                    ? {
+                        voicePreference: {
+                          ...session.dealContext.voicePreference,
+                        },
+                      }
+                    : {}),
                   scenario: { ...session.dealContext.scenario },
                   ...(session.dealContext.backstory
                     ? { backstory: session.dealContext.backstory }
@@ -353,7 +397,8 @@ const handler = createMcpHandler(
               },
             };
           },
-        ),
+        );
+      },
     );
 
     // ─── Prompts ────────────────────────────────────────────────────────────
@@ -388,7 +433,7 @@ const handler = createMcpHandler(
                   `Follow this flow exactly — do not skip steps:\n\n` +
                   `1. Call \`list_opportunities\` and present the list. Ask the user which deal they want to practice.\n` +
                   `2. Once they pick one, call \`get_opportunity_contacts\` with that opportunityId. Present the contacts and ask who they want to roleplay against.\n` +
-                  `3. Call \`list_voices\` and \`list_scenarios\`. Let the user pick one of each (suggest a sensible default based on the deal stage).\n` +
+                  `3. Call \`list_scenarios\` and let the user pick one (suggest a sensible default based on the deal stage). For the voice, ask whether they'd like a male, female, or any voice — pass that as \`voiceGender\` when creating the session. Only call \`list_voices\` and pass a specific \`voiceId\` if the user explicitly asks to choose a specific voice by name.\n` +
                   `4. Ask if they want to add an optional backstory / extra context.\n` +
                   `5. Call \`create_roleplay_session\` with all selected IDs. Share the resulting session URL and give a short pre-call coaching summary.\n\n` +
                   `Rules:\n` +

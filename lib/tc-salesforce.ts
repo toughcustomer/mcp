@@ -21,6 +21,7 @@ import {
   type RoleplaySession,
   type Scenario,
   type Voice,
+  type VoiceGender,
 } from "./tc-service";
 import { type SfAuth } from "./sf-auth";
 import { sfGraphQL, val } from "./sf-graphql";
@@ -262,7 +263,10 @@ function buildLaunchUrl(args: {
   assignmentId: string;
   opportunityId: string;
   contactId: string;
-  voiceId: string;
+  /** Concrete voice id picked by the caller. Mutually exclusive with voiceGender. */
+  voiceId?: string;
+  /** Gender preference; the LWC picks a concrete voice client-side. */
+  voiceGender?: VoiceGender;
   backstory?: string;
 }): string {
   // ScenarioAssignment__c.Launch_Scenario__c is a Lightning-internal URL:
@@ -276,8 +280,12 @@ function buildLaunchUrl(args: {
     c__sa: args.assignmentId,
     c__opp: args.opportunityId,
     c__contact: args.contactId,
-    c__voice: args.voiceId,
   });
+  if (args.voiceId) {
+    params.set("c__voice", args.voiceId);
+  } else if (args.voiceGender) {
+    params.set("c__voiceGender", args.voiceGender);
+  }
   if (args.backstory) params.set("c__backstory", args.backstory);
   return `${lightning}/lightning/n/Learning?${params.toString()}`;
 }
@@ -288,8 +296,23 @@ export async function createRoleplaySessionSF(
 ): Promise<RoleplaySession> {
   // 1. Resolve all the lookups for deal-context the caller picked.
   //    Voice is hardcoded; the rest come from SF.
-  const voice = findVoice(input.voiceId);
-  if (!voice) throw new TCNotFoundError("Voice", input.voiceId);
+  if (!input.voiceId && !input.voiceGender) {
+    throw new Error("Either voiceId or voiceGender must be provided");
+  }
+  let voice: Voice | undefined;
+  let voicePreference:
+    | { gender: VoiceGender; description: string }
+    | undefined;
+  if (input.voiceId) {
+    const found = findVoice(input.voiceId);
+    if (!found) throw new TCNotFoundError("Voice", input.voiceId);
+    voice = found;
+  } else {
+    voicePreference = {
+      gender: input.voiceGender!,
+      description: "AI-picked voice (gender preference)",
+    };
+  }
 
   const lookups = await sfGraphQL<{
     uiapi: {
@@ -427,7 +450,8 @@ export async function createRoleplaySessionSF(
     assignmentId: rec.Id,
     opportunityId: input.opportunityId,
     contactId: input.contactId,
-    voiceId: input.voiceId,
+    voiceId: voice?.id,
+    voiceGender: voice ? undefined : input.voiceGender,
     backstory: input.backstory,
   });
 
@@ -449,7 +473,8 @@ export async function createRoleplaySessionSF(
         name: val(ocrContact.Name) ?? "",
         title: val(ocrContact.Title) ?? "",
       },
-      voice,
+      ...(voice ? { voice } : {}),
+      ...(voicePreference ? { voicePreference } : {}),
       scenario: {
         id: scenarioNode.Id,
         name: val(scenarioNode.Name) ?? "",

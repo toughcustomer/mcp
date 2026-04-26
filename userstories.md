@@ -46,7 +46,7 @@ Status: 🟡 (GraphQL scaffolding shipped; custom objects + Connected App are ma
 
 Acceptance:
 - Settings → Connectors → Add custom connector → paste URL → connector appears with the expected tools/resources/prompts.
-- After a successful connect, `list_opportunities`, `list_voices`, `list_scenarios`, `get_opportunity_contacts`, `create_roleplay_session`, and the `setup_sales_roleplay` prompt are all visible.
+- After a successful connect, `list_opportunities`, `list_voices`, `list_scenarios`, `get_opportunity_contacts`, `create_roleplay_session` (which accepts either `voiceGender` or a specific `voiceId`), and the `setup_sales_roleplay` prompt are all visible.
 - Server changes require a connector reinstall (uninstall → quit Claude → reinstall) to refresh the cached manifest.
 
 Status: ✅
@@ -271,10 +271,12 @@ Acceptance:
 Status: ✅
 
 ### 3.5 Pick voice and scenario
-**As a** salesperson, **I want** to see all available voices and scenarios in one step, **so that** picking is fast.
+**As a** salesperson, **I want** to pick a scenario and a voice preference quickly, **so that** I'm not slogging through a 31-voice menu every session.
 
 Acceptance:
-- `list_voices` returns name, gender, description for each voice.
+- The default flow is: pick a scenario, then pick a *voice gender* (male / female / any). Claude calls `create_roleplay_session` with `voiceGender` and the LWC picks a concrete voice from `lib/voices.ts` at session start.
+- Power-user override: a salesperson who knows the catalog can ask for a specific voice by name; Claude calls `list_voices` and passes `voiceId` instead.
+- `list_voices` still returns name, gender, description for each voice (catalog inspection / LWC picker source of truth).
 - `list_scenarios` returns name and description.
 - Claude suggests a sensible default scenario based on the deal's stage (e.g. Negotiation → Pricing Negotiation).
 
@@ -294,11 +296,11 @@ Status: ✅
 **As a** salesperson, **I want** a shareable session URL I can click to start the roleplay, **so that** I can go straight from chat to practice.
 
 Acceptance:
-- `create_roleplay_session` returns a `https://www.toughcustomer.ai/session/sess_xxx` URL.
-- Claude renders it as a clickable link in its response.
-- The session response includes the full deal context so Claude can prep me before I click.
+- `create_roleplay_session` returns a Lightning launch URL (`/lightning/n/Learning?c__sa=…&c__opp=…&c__contact=…`) plus either `c__voice=<id>` (when the caller specified `voiceId`) or `c__voiceGender=male|female|any` (when the caller specified `voiceGender`). The two voice params are mutually exclusive.
+- Claude renders the URL as a clickable link in its response.
+- The session response includes the full deal context so Claude can prep me before I click. When only a gender preference was given, `dealContext.voicePreference` is returned in place of `dealContext.voice`.
 
-Status: ✅ (URL is currently mocked)
+Status: ✅
 
 ### 3.8 Pre-call coaching
 **As a** salesperson, **I want** Claude to give me 3–5 bullet points of prep based on the deal context, **so that** I'm ready when the roleplay starts.

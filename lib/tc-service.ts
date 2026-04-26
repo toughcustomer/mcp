@@ -54,10 +54,23 @@ export interface Scenario {
   description: string;
 }
 
+export type VoiceGender = "male" | "female" | "any";
+
 export interface CreateSessionInput {
   opportunityId: string;
   contactId: string;
-  voiceId: string;
+  /**
+   * Specific voice from the catalog (power-user path). When set, the server
+   * resolves the Voice and includes it in dealContext + the launch URL.
+   * Either voiceId OR voiceGender must be provided; if both, voiceId wins.
+   */
+  voiceId?: string;
+  /**
+   * Gender preference. When set without voiceId, the LWC picks a concrete
+   * voice from the matching subset of lib/voices.ts at session start. The
+   * launch URL carries c__voiceGender instead of c__voice.
+   */
+  voiceGender?: VoiceGender;
   scenarioId: string;
   backstory?: string;
 }
@@ -69,7 +82,10 @@ export interface RoleplaySession {
   dealContext: {
     opportunity: Opportunity;
     contact: Contact;
-    voice: Voice;
+    /** Present when caller specified voiceId; absent when only voiceGender. */
+    voice?: Voice;
+    /** Present when caller specified voiceGender (and not voiceId). */
+    voicePreference?: { gender: VoiceGender; description: string };
     scenario: Scenario;
     backstory?: string;
   };
@@ -158,8 +174,22 @@ async function createRoleplaySessionMock(
       input.contactId,
     );
 
-  const voice = findVoice(input.voiceId);
-  if (!voice) throw new TCNotFoundError("Voice", input.voiceId);
+  if (!input.voiceId && !input.voiceGender) {
+    throw new Error("Either voiceId or voiceGender must be provided");
+  }
+
+  let voice: Voice | undefined;
+  let voicePreference: { gender: VoiceGender; description: string } | undefined;
+  if (input.voiceId) {
+    const found = findVoice(input.voiceId);
+    if (!found) throw new TCNotFoundError("Voice", input.voiceId);
+    voice = found;
+  } else {
+    voicePreference = {
+      gender: input.voiceGender!,
+      description: "AI-picked voice (gender preference)",
+    };
+  }
 
   const scenario = SCENARIOS.find((s) => s.id === input.scenarioId);
   if (!scenario) throw new TCNotFoundError("Scenario", input.scenarioId);
@@ -176,7 +206,8 @@ async function createRoleplaySessionMock(
     dealContext: {
       opportunity,
       contact,
-      voice,
+      ...(voice ? { voice } : {}),
+      ...(voicePreference ? { voicePreference } : {}),
       scenario,
       backstory: input.backstory,
     },

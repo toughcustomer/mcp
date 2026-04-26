@@ -79,6 +79,8 @@ const GEMINI_VOICES = [
 
 If a future requirement makes voices admin-curatable per org, that's the moment to introduce a CMDT (`Voice__mdt`) — not a regular custom object — because it's metadata, not data. Until then, hardcode.
 
+> **LWC contract:** the launch URL the MCP server hands the LWC carries either `c__voice=<voiceId>` (caller picked a specific voice) **or** `c__voiceGender=male|female|any` (caller expressed only a gender preference; the LWC must pick a concrete voice from the matching subset of the hardcoded list at session start). The two are mutually exclusive — never both. Follow-up: share a single source of truth for the voice catalog between the MCP server (`lib/voices.ts`) and the LWC, either via a `VoiceCatalog` static resource or an authenticated fetch of `/list_voices`.
+
 ---
 
 ## Custom object: `Scenario__c`
