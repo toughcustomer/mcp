@@ -174,31 +174,40 @@ export async function saveIdentityLink(
 
 // ─── bytea decoder ────────────────────────────────────────────────────────
 //
-// PostgREST returns bytea as one of:
-//   1. `\x<hex>`             — preferred, written by saveIdentityLink above
-//   2. `{"type":"Buffer","data":[...]}` — legacy from when supabase-js
-//      JSON-serialized our Buffer on insert
-//   3. raw Uint8Array         — some client configurations
+// PostgREST returns bytea as a string in PostgreSQL's `\x<hex>` format. The
+// raw bytes after hex-decoding are normally the ciphertext directly. But
+// rows written by an earlier buggy version of saveIdentityLink contain the
+// JSON-stringified output of Buffer.toJSON() (`{"type":"Buffer","data":[…]}`)
+// stored as bytes — so we must hex-decode FIRST, then sniff for that JSON
+// at the byte level. New rows skip the JSON branch.
 function decodeBytea(value: unknown): Buffer {
+  // Get raw bytes regardless of input shape.
+  let bytes: Buffer;
   if (typeof value === "string") {
-    if (value.startsWith("\\x")) {
-      return Buffer.from(value.slice(2), "hex");
-    }
-    // Legacy JSON-stringified Buffer payload
-    if (value.startsWith("{")) {
-      try {
-        const parsed = JSON.parse(value) as { type?: string; data?: number[] };
-        if (parsed.type === "Buffer" && Array.isArray(parsed.data)) {
-          return Buffer.from(parsed.data);
-        }
-      } catch {
-        // fall through
-      }
-    }
-    // Last resort: treat as base64
-    return Buffer.from(value, "base64");
+    bytes = value.startsWith("\\x")
+      ? Buffer.from(value.slice(2), "hex")
+      : Buffer.from(value, "base64");
+  } else {
+    bytes = Buffer.from(value as Uint8Array);
   }
-  return Buffer.from(value as Uint8Array);
+
+  // Legacy JSON-Buffer detection: starts with `{` (0x7b) and decodes as
+  // {type:"Buffer", data:[…]}. Cheap to check by first byte.
+  if (bytes.length > 0 && bytes[0] === 0x7b) {
+    try {
+      const parsed = JSON.parse(bytes.toString("utf8")) as {
+        type?: string;
+        data?: number[];
+      };
+      if (parsed.type === "Buffer" && Array.isArray(parsed.data)) {
+        return Buffer.from(parsed.data);
+      }
+    } catch {
+      // not JSON — fall through and use raw bytes
+    }
+  }
+
+  return bytes;
 }
 
 /**
