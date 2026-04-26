@@ -62,7 +62,10 @@ export async function POST() {
   authorizeUrl.searchParams.set("redirect_uri", `${appBaseUrl()}/connect/callback`);
   authorizeUrl.searchParams.set("code_challenge", codeChallenge);
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
-  authorizeUrl.searchParams.set("scope", "api refresh_token openid");
+  // Scopes must match what's enabled in the SF Connected/External Client App.
+  // We don't request `openid` because we don't use the SF ID token — identity
+  // for our app comes from the Supabase JWT, not from SF.
+  authorizeUrl.searchParams.set("scope", "api refresh_token");
   authorizeUrl.searchParams.set("state", state);
 
   const res = NextResponse.redirect(authorizeUrl.toString());
