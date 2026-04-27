@@ -15,6 +15,8 @@
 
 import {
   TCNotFoundError,
+  type CoachContext,
+  type CoachContextInput,
   type Contact,
   type CreateSessionInput,
   type Opportunity,
@@ -26,6 +28,13 @@ import {
 import { type SfAuth } from "./sf-auth";
 import { sfGraphQL, val } from "./sf-graphql";
 import { VOICES, findVoice } from "./voices";
+import {
+  buildCoachInstructions,
+  DEFAULT_PERSONALITY,
+  type CoachContact,
+  type CoachProduct,
+  type PersonalityTraits,
+} from "./coach-instructions";
 
 // ─── Type aliases for raw GraphQL response shapes ────────────────────────
 
@@ -427,5 +436,270 @@ export async function createRoleplaySessionSF(
         : {}),
       ...(input.backstory ? { backstory: input.backstory } : {}),
     },
+  };
+}
+
+// ─── get_coach_context ──────────────────────────────────────────────────
+//
+// One round-trip to Salesforce that fetches everything the legacy oppGraph
+// LWC merged client-side: scenario script, opportunity context (incl.
+// MainCompetitors__c), all OpportunityContactRoles with full Contact
+// fields, all OpportunityLineItems with their Product2. The merged
+// instruction text is built server-side via buildCoachInstructions().
+
+interface CoachOppNode {
+  Id: string;
+  Name: GqlString;
+  StageName: GqlString;
+  Amount: GqlNumber;
+  Account: { Name: GqlString } | null;
+  MainCompetitors__c: GqlString;
+}
+interface CoachScenarioNode {
+  Id: string;
+  Name: GqlString;
+  Body__c: GqlString;
+  Case__c: GqlString;
+}
+interface CoachOcrNode {
+  Id: string;
+  Role: GqlString;
+  IsPrimary: { value: boolean | null } | null;
+  Contact: {
+    Id: string;
+    Name: GqlString;
+    Email: GqlString;
+    Phone: GqlString;
+    Title: GqlString;
+    Department: GqlString;
+    Account: { Name: GqlString } | null;
+    MailingCity: GqlString;
+    MailingState: GqlString;
+    MailingCountry: GqlString;
+    Description: GqlString;
+  } | null;
+}
+interface CoachOliNode {
+  Id: string;
+  Quantity: GqlNumber;
+  UnitPrice: GqlNumber;
+  TotalPrice: GqlNumber;
+  ServiceDate: { displayValue: string | null } | null;
+  Product2: {
+    Name: GqlString;
+    Description: GqlString;
+    Family: GqlString;
+  } | null;
+}
+
+function fillPersonality(
+  partial?: Partial<PersonalityTraits>,
+): PersonalityTraits {
+  return { ...DEFAULT_PERSONALITY, ...(partial ?? {}) };
+}
+
+export async function getCoachContextSF(
+  auth: SfAuth,
+  input: CoachContextInput,
+): Promise<CoachContext> {
+  const data = await sfGraphQL<{
+    uiapi: {
+      query: {
+        Scenario__c: GqlNode<CoachScenarioNode>;
+        Opportunity: GqlNode<CoachOppNode>;
+        OpportunityContactRole: GqlNode<CoachOcrNode>;
+        OpportunityLineItem: GqlNode<CoachOliNode>;
+      };
+    };
+  }>(
+    auth,
+    /* GraphQL */ `
+      query CoachContext($oppId: ID!, $scenarioId: ID!) {
+        uiapi {
+          query {
+            Scenario__c(where: { Id: { eq: $scenarioId } }, first: 1) {
+              edges {
+                node {
+                  Id
+                  Name { value }
+                  Body__c { value }
+                  Case__c { value }
+                }
+              }
+            }
+            Opportunity(where: { Id: { eq: $oppId } }, first: 1) {
+              edges {
+                node {
+                  Id
+                  Name { value }
+                  StageName { value }
+                  Amount { value }
+                  Account { Name { value } }
+                  MainCompetitors__c { value }
+                }
+              }
+            }
+            OpportunityContactRole(
+              where: { OpportunityId: { eq: $oppId } }
+              first: 50
+            ) {
+              edges {
+                node {
+                  Id
+                  Role { value }
+                  IsPrimary { value }
+                  Contact {
+                    Id
+                    Name { value }
+                    Email { value }
+                    Phone { value }
+                    Title { value }
+                    Department { value }
+                    Account { Name { value } }
+                    MailingCity { value }
+                    MailingState { value }
+                    MailingCountry { value }
+                    Description { value }
+                  }
+                }
+              }
+            }
+            OpportunityLineItem(
+              where: { OpportunityId: { eq: $oppId } }
+              first: 100
+            ) {
+              edges {
+                node {
+                  Id
+                  Quantity { value }
+                  UnitPrice { value }
+                  TotalPrice { value }
+                  ServiceDate { displayValue }
+                  Product2 {
+                    Name { value }
+                    Description { value }
+                    Family { value }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `,
+    { oppId: input.opportunityId, scenarioId: input.scenarioId },
+  );
+
+  // Validate the two required pickers.
+  const scenarioNode = data.uiapi.query.Scenario__c.edges[0]?.node;
+  if (!scenarioNode) throw new TCNotFoundError("Scenario", input.scenarioId);
+
+  const oppNode = data.uiapi.query.Opportunity.edges[0]?.node;
+  if (!oppNode) throw new TCNotFoundError("Opportunity", input.opportunityId);
+
+  // Sort OCRs primary-first (orderBy not accepted by SF GraphQL on this
+  // connection — same workaround as get_opportunity_contacts).
+  const ocrs = data.uiapi.query.OpportunityContactRole.edges
+    .map(({ node }) => node)
+    .filter((o) => o.Contact != null)
+    .sort((a, b) => {
+      const ap = a.IsPrimary?.value ? 1 : 0;
+      const bp = b.IsPrimary?.value ? 1 : 0;
+      return bp - ap;
+    });
+
+  // Pick: explicit contactId if provided; otherwise first (primary).
+  let pickedOcr: CoachOcrNode | undefined;
+  if (input.contactId) {
+    pickedOcr = ocrs.find((o) => o.Contact?.Id === input.contactId);
+    if (!pickedOcr) {
+      throw new TCNotFoundError(
+        `Contact for opportunity ${input.opportunityId}`,
+        input.contactId,
+      );
+    }
+  } else {
+    pickedOcr = ocrs[0];
+  }
+
+  const contactForBuilder: CoachContact | undefined = pickedOcr?.Contact
+    ? {
+        name: val(pickedOcr.Contact.Name) ?? "",
+        title: val(pickedOcr.Contact.Title) ?? undefined,
+        email: val(pickedOcr.Contact.Email) ?? undefined,
+        phone: val(pickedOcr.Contact.Phone) ?? undefined,
+        department: val(pickedOcr.Contact.Department) ?? undefined,
+        accountName: val(pickedOcr.Contact.Account?.Name ?? null) ?? undefined,
+        mailingCity: val(pickedOcr.Contact.MailingCity) ?? undefined,
+        mailingState: val(pickedOcr.Contact.MailingState) ?? undefined,
+        mailingCountry: val(pickedOcr.Contact.MailingCountry) ?? undefined,
+        description: val(pickedOcr.Contact.Description) ?? undefined,
+      }
+    : undefined;
+
+  const products: CoachProduct[] = data.uiapi.query.OpportunityLineItem.edges.map(
+    ({ node }) => ({
+      productName: val(node.Product2?.Name ?? null) ?? undefined,
+      productDescription: val(node.Product2?.Description ?? null) ?? undefined,
+      productFamily: val(node.Product2?.Family ?? null) ?? undefined,
+      quantity: val(node.Quantity) ?? undefined,
+      unitPrice: val(node.UnitPrice) ?? undefined,
+      totalPrice: val(node.TotalPrice) ?? undefined,
+      serviceDate: node.ServiceDate?.displayValue ?? undefined,
+    }),
+  );
+
+  const personality = fillPersonality(input.personality);
+  const mainCompetitors = val(oppNode.MainCompetitors__c) ?? undefined;
+
+  const { instructions, totalDealValue } = buildCoachInstructions({
+    scenarioBody: val(scenarioNode.Body__c) ?? undefined,
+    contact: contactForBuilder,
+    products,
+    mainCompetitors,
+    backstory: input.backstory,
+    personality,
+  });
+
+  return {
+    scenario: {
+      id: scenarioNode.Id,
+      name: val(scenarioNode.Name) ?? "",
+      body: val(scenarioNode.Body__c) ?? undefined,
+      case: val(scenarioNode.Case__c) ?? undefined,
+    },
+    opportunity: {
+      id: oppNode.Id,
+      name: val(oppNode.Name) ?? "",
+      accountName: val(oppNode.Account?.Name ?? null) ?? undefined,
+      stage: val(oppNode.StageName) ?? "",
+      amount: val(oppNode.Amount) ?? 0,
+      mainCompetitors,
+    },
+    ...(pickedOcr?.Contact
+      ? {
+          contact: {
+            id: pickedOcr.Contact.Id,
+            role: val(pickedOcr.Role) ?? undefined,
+            isPrimary: pickedOcr.IsPrimary?.value ?? undefined,
+            name: val(pickedOcr.Contact.Name) ?? "",
+            title: val(pickedOcr.Contact.Title) ?? undefined,
+            email: val(pickedOcr.Contact.Email) ?? undefined,
+            phone: val(pickedOcr.Contact.Phone) ?? undefined,
+            department: val(pickedOcr.Contact.Department) ?? undefined,
+            accountName:
+              val(pickedOcr.Contact.Account?.Name ?? null) ?? undefined,
+            mailingCity: val(pickedOcr.Contact.MailingCity) ?? undefined,
+            mailingState: val(pickedOcr.Contact.MailingState) ?? undefined,
+            mailingCountry: val(pickedOcr.Contact.MailingCountry) ?? undefined,
+            description: val(pickedOcr.Contact.Description) ?? undefined,
+          },
+        }
+      : {}),
+    products,
+    totalDealValue,
+    instructions,
+    ...(input.backstory ? { backstory: input.backstory } : {}),
+    personality,
   };
 }

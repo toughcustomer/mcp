@@ -17,11 +17,18 @@
 import { SfAuth } from "./sf-auth";
 import {
   createRoleplaySessionSF,
+  getCoachContextSF,
   getOpportunityContactsSF,
   listOpportunitiesSF,
   listScenariosSF,
   listVoicesSF,
 } from "./tc-salesforce";
+import {
+  buildCoachInstructions,
+  DEFAULT_PERSONALITY,
+  type CoachContact,
+  type PersonalityTraits,
+} from "./coach-instructions";
 
 export { TCUnauthorizedError } from "./sf-auth";
 
@@ -83,6 +90,67 @@ export interface CreateSessionInput {
   voiceGender?: VoiceGender;
   /** Optional free-text context for the AI buyer. */
   backstory?: string;
+}
+
+export type CoachPersonality = {
+  openness: number;
+  conscientiousness: number;
+  extraversion: number;
+  agreeableness: number;
+  neuroticism: number;
+};
+
+export interface CoachContextInput {
+  opportunityId: string;
+  scenarioId: string;
+  /** Optional. If omitted, the primary contact role on the opp is used. */
+  contactId?: string;
+  /** Optional. Free-text background fed into the AI buyer's instructions. */
+  backstory?: string;
+  /** Optional Big-5 dial; defaults to all 3 (medium). */
+  personality?: Partial<CoachPersonality>;
+}
+
+export interface CoachContext {
+  scenario: { id: string; name: string; body?: string; case?: string };
+  opportunity: {
+    id: string;
+    name: string;
+    accountName?: string;
+    stage: string;
+    amount: number;
+    mainCompetitors?: string;
+  };
+  /** Picked contact (explicit or auto-primary). Absent when no OCRs exist. */
+  contact?: {
+    id: string;
+    role?: string;
+    isPrimary?: boolean;
+    name: string;
+    title?: string;
+    email?: string;
+    phone?: string;
+    department?: string;
+    accountName?: string;
+    mailingCity?: string;
+    mailingState?: string;
+    mailingCountry?: string;
+    description?: string;
+  };
+  products: Array<{
+    productName?: string;
+    productDescription?: string;
+    productFamily?: string;
+    quantity?: number;
+    unitPrice?: number;
+    totalPrice?: number;
+    serviceDate?: string;
+  }>;
+  totalDealValue: number;
+  /** The merged system-prompt-ready text. */
+  instructions: string;
+  backstory?: string;
+  personality: CoachPersonality;
 }
 
 export interface RoleplaySession {
@@ -261,4 +329,84 @@ export async function createRoleplaySession(
   return auth.mock
     ? createRoleplaySessionMock(auth, input)
     : createRoleplaySessionSF(auth, input);
+}
+
+// ─── get_coach_context ──────────────────────────────────────────────────
+
+function fillPersonality(
+  partial?: Partial<CoachPersonality>,
+): PersonalityTraits {
+  return { ...DEFAULT_PERSONALITY, ...(partial ?? {}) };
+}
+
+async function getCoachContextMock(
+  _auth: SfAuth,
+  input: CoachContextInput,
+): Promise<CoachContext> {
+  const opportunity = OPPORTUNITIES.find((o) => o.id === input.opportunityId);
+  if (!opportunity) throw new TCNotFoundError("Opportunity", input.opportunityId);
+
+  const scenario = SCENARIOS.find((s) => s.id === input.scenarioId);
+  if (!scenario) throw new TCNotFoundError("Scenario", input.scenarioId);
+
+  const contactRole = input.contactId
+    ? CONTACTS.find(
+        (c) =>
+          c.id === input.contactId && c.opportunityId === input.opportunityId,
+      )
+    : CONTACTS.find((c) => c.opportunityId === input.opportunityId);
+  if (input.contactId && !contactRole) {
+    throw new TCNotFoundError(
+      `Contact for opportunity ${input.opportunityId}`,
+      input.contactId,
+    );
+  }
+
+  const personality = fillPersonality(input.personality);
+  const contactForBuilder: CoachContact | undefined = contactRole
+    ? {
+        name: contactRole.name,
+        title: contactRole.title,
+        accountName: opportunity.accountName,
+      }
+    : undefined;
+
+  const { instructions, totalDealValue } = buildCoachInstructions({
+    scenarioBody: scenario.description,
+    contact: contactForBuilder,
+    products: [],
+    backstory: input.backstory,
+    personality,
+  });
+
+  return {
+    scenario: { id: scenario.id, name: scenario.name, body: scenario.description },
+    opportunity: { ...opportunity },
+    ...(contactRole
+      ? {
+          contact: {
+            id: contactRole.id,
+            role: "Decision Maker",
+            isPrimary: true,
+            name: contactRole.name,
+            title: contactRole.title,
+            accountName: opportunity.accountName,
+          },
+        }
+      : {}),
+    products: [],
+    totalDealValue,
+    instructions,
+    ...(input.backstory ? { backstory: input.backstory } : {}),
+    personality,
+  };
+}
+
+export async function getCoachContext(
+  auth: SfAuth,
+  input: CoachContextInput,
+): Promise<CoachContext> {
+  return auth.mock
+    ? getCoachContextMock(auth, input)
+    : getCoachContextSF(auth, input);
 }

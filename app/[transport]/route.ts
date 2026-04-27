@@ -2,6 +2,7 @@ import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
 import {
   createRoleplaySession,
+  getCoachContext,
   getOpportunityContacts,
   listOpportunities,
   listScenarios,
@@ -418,6 +419,109 @@ const handler = createMcpHandler(
                     ? { backstory: session.dealContext.backstory }
                     : {}),
                 },
+              },
+            };
+          },
+        ),
+    );
+
+    server.registerTool(
+      "get_coach_context",
+      {
+        title: "Get Coach Context",
+        description:
+          "Build the system-prompt-ready coach instructions for a Tough Customer " +
+          "roleplay on a specific opportunity + scenario. One round-trip pulls " +
+          "the scenario script, opportunity context (incl. main competitor), " +
+          "all OpportunityContactRoles + Contact details, and OpportunityLineItems " +
+          "with their products. Returns both the merged `instructions` text and " +
+          "the structured pieces. Mirrors the legacy oppCoach LWC's " +
+          "buildCustomInstructions pure-JS builder, server-side.\n\n" +
+          "Use after `create_roleplay_session` (or independently) when you need " +
+          "the full coaching brief — e.g. to summarize the buyer/products/" +
+          "competitor before the user clicks Start.",
+        inputSchema: {
+          opportunityId: z.string().min(1).describe("Salesforce Opportunity Id."),
+          scenarioId: z.string().min(1).describe("Scenario__c Id from list_scenarios."),
+          contactId: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "Optional Contact Id. If omitted, the primary contact role on the opp is used.",
+            ),
+          backstory: z
+            .string()
+            .max(4000)
+            .optional()
+            .describe("Optional free-text background woven into the instructions."),
+          personality: z
+            .object({
+              openness: z.number().int().min(1).max(5).optional(),
+              conscientiousness: z.number().int().min(1).max(5).optional(),
+              extraversion: z.number().int().min(1).max(5).optional(),
+              agreeableness: z.number().int().min(1).max(5).optional(),
+              neuroticism: z.number().int().min(1).max(5).optional(),
+            })
+            .optional()
+            .describe(
+              "Optional Big-5 personality dial (1-5 each). Defaults to 3 (medium) for any field omitted.",
+            ),
+        },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+      },
+      async (input) =>
+        runMcpTool(
+          "get_coach_context",
+          {
+            opportunityId: input.opportunityId,
+            scenarioId: input.scenarioId,
+            hasContactId: !!input.contactId,
+            backstoryLength: input.backstory?.length ?? 0,
+            hasPersonality: !!input.personality,
+          },
+          async (auth) => {
+            const ctx = await getCoachContext(auth, input);
+            // Compact text view for Claude — instructions block then a
+            // factual summary line. Claude can also read structuredContent
+            // if it wants to dig into specific pieces.
+            const summary =
+              `Deal: ${ctx.opportunity.name}` +
+              (ctx.opportunity.accountName
+                ? ` (${ctx.opportunity.accountName})`
+                : "") +
+              ` — ${ctx.opportunity.stage}, $${ctx.opportunity.amount.toLocaleString()}\n` +
+              `Scenario: ${ctx.scenario.name}\n` +
+              (ctx.contact
+                ? `Buyer: ${ctx.contact.name}${ctx.contact.title ? ", " + ctx.contact.title : ""}${ctx.contact.role ? " (" + ctx.contact.role + ")" : ""}\n`
+                : "") +
+              (ctx.products.length > 0
+                ? `Products: ${ctx.products.length}, total $${ctx.totalDealValue.toLocaleString()}\n`
+                : "") +
+              (ctx.opportunity.mainCompetitors
+                ? `Competitor: ${ctx.opportunity.mainCompetitors}\n`
+                : "");
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `${summary}\n--- INSTRUCTIONS ---\n${ctx.instructions}`,
+                },
+              ],
+              structuredContent: {
+                scenario: { ...ctx.scenario },
+                opportunity: { ...ctx.opportunity },
+                ...(ctx.contact ? { contact: { ...ctx.contact } } : {}),
+                products: ctx.products.map((p) => ({ ...p })),
+                totalDealValue: ctx.totalDealValue,
+                instructions: ctx.instructions,
+                ...(ctx.backstory ? { backstory: ctx.backstory } : {}),
+                personality: { ...ctx.personality },
               },
             };
           },
