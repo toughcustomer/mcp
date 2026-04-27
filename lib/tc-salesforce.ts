@@ -30,10 +30,8 @@ import { sfGraphQL, val } from "./sf-graphql";
 import { VOICES, findVoice } from "./voices";
 import {
   buildCoachInstructions,
-  DEFAULT_PERSONALITY,
   type CoachContact,
   type CoachProduct,
-  type PersonalityTraits,
 } from "./coach-instructions";
 
 // ─── Type aliases for raw GraphQL response shapes ────────────────────────
@@ -492,12 +490,6 @@ interface CoachOliNode {
   } | null;
 }
 
-function fillPersonality(
-  partial?: Partial<PersonalityTraits>,
-): PersonalityTraits {
-  return { ...DEFAULT_PERSONALITY, ...(partial ?? {}) };
-}
-
 export async function getCoachContextSF(
   auth: SfAuth,
   input: CoachContextInput,
@@ -649,7 +641,6 @@ export async function getCoachContextSF(
     }),
   );
 
-  const personality = fillPersonality(input.personality);
   const mainCompetitors = val(oppNode.MainCompetitors__c) ?? undefined;
 
   const { instructions, totalDealValue } = buildCoachInstructions({
@@ -658,7 +649,6 @@ export async function getCoachContextSF(
     products,
     mainCompetitors,
     backstory: input.backstory,
-    personality,
   });
 
   return {
@@ -700,6 +690,5 @@ export async function getCoachContextSF(
     totalDealValue,
     instructions,
     ...(input.backstory ? { backstory: input.backstory } : {}),
-    personality,
   };
 }

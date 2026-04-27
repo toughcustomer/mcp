@@ -435,8 +435,7 @@ const handler = createMcpHandler(
           "the scenario script, opportunity context (incl. main competitor), " +
           "all OpportunityContactRoles + Contact details, and OpportunityLineItems " +
           "with their products. Returns both the merged `instructions` text and " +
-          "the structured pieces. Mirrors the legacy oppCoach LWC's " +
-          "buildCustomInstructions pure-JS builder, server-side.\n\n" +
+          "the structured pieces.\n\n" +
           "Use after `create_roleplay_session` (or independently) when you need " +
           "the full coaching brief — e.g. to summarize the buyer/products/" +
           "competitor before the user clicks Start.",
@@ -455,18 +454,6 @@ const handler = createMcpHandler(
             .max(4000)
             .optional()
             .describe("Optional free-text background woven into the instructions."),
-          personality: z
-            .object({
-              openness: z.number().int().min(1).max(5).optional(),
-              conscientiousness: z.number().int().min(1).max(5).optional(),
-              extraversion: z.number().int().min(1).max(5).optional(),
-              agreeableness: z.number().int().min(1).max(5).optional(),
-              neuroticism: z.number().int().min(1).max(5).optional(),
-            })
-            .optional()
-            .describe(
-              "Optional Big-5 personality dial (1-5 each). Defaults to 3 (medium) for any field omitted.",
-            ),
         },
         annotations: {
           readOnlyHint: true,
@@ -483,7 +470,6 @@ const handler = createMcpHandler(
             scenarioId: input.scenarioId,
             hasContactId: !!input.contactId,
             backstoryLength: input.backstory?.length ?? 0,
-            hasPersonality: !!input.personality,
           },
           async (auth) => {
             const ctx = await getCoachContext(auth, input);
@@ -521,7 +507,6 @@ const handler = createMcpHandler(
                 totalDealValue: ctx.totalDealValue,
                 instructions: ctx.instructions,
                 ...(ctx.backstory ? { backstory: ctx.backstory } : {}),
-                personality: { ...ctx.personality },
               },
             };
           },

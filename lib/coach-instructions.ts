@@ -1,47 +1,9 @@
 // Pure-TS port of oppGraph.js `buildCustomInstructions`.
 //
 // Takes the structured coach inputs (scenario script, picked contact, opp
-// products + competitor, free-text backstory, Big-5 personality dial) and
-// returns the merged instruction string an LLM can use as its system
-// prompt for the AI buyer in a Tough Customer roleplay.
-
-export interface PersonalityTraits {
-  /** 1–5; default 3 (medium). */
-  openness: number;
-  conscientiousness: number;
-  extraversion: number;
-  agreeableness: number;
-  neuroticism: number;
-}
-
-export const DEFAULT_PERSONALITY: PersonalityTraits = {
-  openness: 3,
-  conscientiousness: 3,
-  extraversion: 3,
-  agreeableness: 3,
-  neuroticism: 3,
-};
-
-const PERSONALITY_DESCRIPTIONS: Record<keyof PersonalityTraits, string> = {
-  openness:
-    "Reflects imagination, creativity, curiosity, and a preference for novelty and variety. Individuals high in openness tend to be intellectually curious and open to new experiences.",
-  conscientiousness:
-    "Denotes a tendency toward organization, dependability, and discipline. Highly conscientious people are often goal-oriented, mindful of details, and reliable.",
-  extraversion:
-    "Characterized by sociability, assertiveness, and enthusiasm. Extraverts are energized by social interactions and often seek out the company of others.",
-  agreeableness:
-    "Involves attributes such as trust, altruism, kindness, and affection. Those high in agreeableness are cooperative and compassionate toward others.",
-  neuroticism:
-    "Indicates emotional instability and a tendency to experience negative emotions like anxiety, anger, or depression. Individuals high in neuroticism may be more prone to stress and emotional reactivity.",
-};
-
-function traitLevel(value: number): string {
-  if (value <= 1) return "Very Low";
-  if (value === 2) return "Low";
-  if (value === 3) return "Medium";
-  if (value === 4) return "High";
-  return "Very High";
-}
+// products + competitor, free-text backstory) and returns the merged
+// instruction string an LLM can use as its system prompt for the AI buyer
+// in a Tough Customer roleplay.
 
 export interface CoachContact {
   name: string;
@@ -72,12 +34,11 @@ export interface BuildCoachInstructionsInput {
   products?: CoachProduct[];
   mainCompetitors?: string;
   backstory?: string;
-  personality?: PersonalityTraits;
 }
 
 /**
  * Returns the merged instruction string and the running deal-value total
- * (the LWC also dispatches this; useful for Claude's coaching summary).
+ * (the LWC also dispatches this; useful for a coaching summary).
  */
 export function buildCoachInstructions(
   input: BuildCoachInstructionsInput,
@@ -136,20 +97,8 @@ export function buildCoachInstructions(
     );
   }
 
-  const personality = input.personality ?? DEFAULT_PERSONALITY;
-  const profile = [
-    "",
-    "Personality Profile:",
-    ...(Object.entries(personality) as Array<
-      [keyof PersonalityTraits, number]
-    >).map(
-      ([trait, value]) =>
-        `You are ${traitLevel(value)} in ${trait} on the big 5 personality model. This means you are someone who ${PERSONALITY_DESCRIPTIONS[trait]}`,
-    ),
-  ].join("\n");
-
   return {
-    instructions: (lines.join("\n") + profile).trim(),
+    instructions: lines.join("\n").trim(),
     totalDealValue,
   };
 }

@@ -25,9 +25,7 @@ import {
 } from "./tc-salesforce";
 import {
   buildCoachInstructions,
-  DEFAULT_PERSONALITY,
   type CoachContact,
-  type PersonalityTraits,
 } from "./coach-instructions";
 
 export { TCUnauthorizedError } from "./sf-auth";
@@ -92,14 +90,6 @@ export interface CreateSessionInput {
   backstory?: string;
 }
 
-export type CoachPersonality = {
-  openness: number;
-  conscientiousness: number;
-  extraversion: number;
-  agreeableness: number;
-  neuroticism: number;
-};
-
 export interface CoachContextInput {
   opportunityId: string;
   scenarioId: string;
@@ -107,8 +97,6 @@ export interface CoachContextInput {
   contactId?: string;
   /** Optional. Free-text background fed into the AI buyer's instructions. */
   backstory?: string;
-  /** Optional Big-5 dial; defaults to all 3 (medium). */
-  personality?: Partial<CoachPersonality>;
 }
 
 export interface CoachContext {
@@ -150,7 +138,6 @@ export interface CoachContext {
   /** The merged system-prompt-ready text. */
   instructions: string;
   backstory?: string;
-  personality: CoachPersonality;
 }
 
 export interface RoleplaySession {
@@ -333,12 +320,6 @@ export async function createRoleplaySession(
 
 // ─── get_coach_context ──────────────────────────────────────────────────
 
-function fillPersonality(
-  partial?: Partial<CoachPersonality>,
-): PersonalityTraits {
-  return { ...DEFAULT_PERSONALITY, ...(partial ?? {}) };
-}
-
 async function getCoachContextMock(
   _auth: SfAuth,
   input: CoachContextInput,
@@ -362,7 +343,6 @@ async function getCoachContextMock(
     );
   }
 
-  const personality = fillPersonality(input.personality);
   const contactForBuilder: CoachContact | undefined = contactRole
     ? {
         name: contactRole.name,
@@ -376,7 +356,6 @@ async function getCoachContextMock(
     contact: contactForBuilder,
     products: [],
     backstory: input.backstory,
-    personality,
   });
 
   return {
@@ -398,7 +377,6 @@ async function getCoachContextMock(
     totalDealValue,
     instructions,
     ...(input.backstory ? { backstory: input.backstory } : {}),
-    personality,
   };
 }
 
