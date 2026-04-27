@@ -296,7 +296,7 @@ Status: ✅
 **As a** salesperson, **I want** a shareable session URL I can click to start the roleplay, **so that** I can go straight from chat to practice.
 
 Acceptance:
-- `create_roleplay_session` returns a Lightning launch URL (`/lightning/n/Learning?c__sa=…&c__opp=…&c__contact=…`) plus either `c__voice=<id>` (when the caller specified `voiceId`) or `c__voiceGender=male|female|any` (when the caller specified `voiceGender`). The two voice params are mutually exclusive.
+- `create_roleplay_session` returns a Lightning launch URL `/lightning/n/Learning?c__opp=<opportunityId>`. The LWC resolves the rest (scenario, contact, voice, the user's most recent `ScenarioAssignment__c` for that opp) at session-start.
 - Claude renders the URL as a clickable link in its response.
 - The session response includes the full deal context so Claude can prep me before I click. When only a gender preference was given, `dealContext.voicePreference` is returned in place of `dealContext.voice`.
 

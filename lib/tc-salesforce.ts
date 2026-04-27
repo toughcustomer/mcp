@@ -267,34 +267,17 @@ function plusDaysIso(days: number): string {
 
 function buildLaunchUrl(args: {
   instanceUrl: string;
-  assignmentId: string;
   opportunityId: string;
-  contactId: string;
-  /** Concrete voice id picked by the caller. Mutually exclusive with voiceGender. */
-  voiceId?: string;
-  /** Gender preference; the LWC picks a concrete voice client-side. */
-  voiceGender?: VoiceGender;
-  backstory?: string;
 }): string {
-  // ScenarioAssignment__c.Launch_Scenario__c is a Lightning-internal URL:
-  //   /lightning/n/Learning?c__sa=<assignmentId>
-  // We append context the LWC reads to pre-fill voice / opportunity / contact.
-  // Use the Lightning host derived from the instance URL.
-  const lightning = args.instanceUrl
-    .replace(".my.salesforce.com", ".lightning.force.com")
-    .replace(/^https:\/\//, "https://");
-  const params = new URLSearchParams({
-    c__sa: args.assignmentId,
-    c__opp: args.opportunityId,
-    c__contact: args.contactId,
-  });
-  if (args.voiceId) {
-    params.set("c__voice", args.voiceId);
-  } else if (args.voiceGender) {
-    params.set("c__voiceGender", args.voiceGender);
-  }
-  if (args.backstory) params.set("c__backstory", args.backstory);
-  return `${lightning}/lightning/n/Learning?${params.toString()}`;
+  // The Learning LWC takes only `c__opp=<opportunityId>` from the URL.
+  // Everything else (selected scenario / contact / voice / assignment) is
+  // resolved by the LWC at session-start from the opportunity context and
+  // the user's most recent ScenarioAssignment__c on it.
+  const lightning = args.instanceUrl.replace(
+    ".my.salesforce.com",
+    ".lightning.force.com",
+  );
+  return `${lightning}/lightning/n/Learning?c__opp=${encodeURIComponent(args.opportunityId)}`;
 }
 
 export async function createRoleplaySessionSF(
@@ -454,12 +437,7 @@ export async function createRoleplaySessionSF(
   const rec = mutResult.Record;
   const launchUrl = buildLaunchUrl({
     instanceUrl: auth.instanceUrl,
-    assignmentId: rec.Id,
     opportunityId: input.opportunityId,
-    contactId: input.contactId,
-    voiceId: voice?.id,
-    voiceGender: voice ? undefined : input.voiceGender,
-    backstory: input.backstory,
   });
 
   return {
